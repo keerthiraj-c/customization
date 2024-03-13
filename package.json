@@ -1,0 +1,24 @@
+{
+  "name": "final",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "hardhat": "^2.21.0"
+  },
+  "dependencies": {
+    "@nomicfoundation/edr": "^0.2.0",
+    "@nomicfoundation/edr-linux-x64-gnu": "^0.2.0",
+    "@nomicfoundation/hardhat-chai-matchers": "^2.0.6",
+    "@nomiclabs/hardhat-ethers": "^2.2.3",
+    "@openzeppelin/contracts": "^5.0.2",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.11.1"
+  }
+}

@@ -1,0 +1,159 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+contract CombinedToken is ERC20, Ownable {
+    struct WhitelistInfo {
+        bool isWhitelisted;
+        uint256 maxTransactionAmount;
+    }
+
+    mapping(address => WhitelistInfo) private _whitelist;
+    mapping(address => bool) private _blacklist;
+
+    uint256 public totalTaxPercent;
+    uint256 public burnTaxPercent;
+    uint256 public walletTaxPercent;
+    address[] private walletAddresses;
+
+    event AddedToWhitelist(address indexed account, uint256 maxTransactionAmount);
+    event RemovedFromWhitelist(address indexed account);
+    event AddedToBlacklist(address indexed account);
+    event RemovedFromBlacklist(address indexed account);
+    event TransferWithTax(address indexed sender, address indexed recipient, uint256 amount, uint256 taxAmount, uint256 burnAmount, uint256 walletTaxAmount);
+    event TaxPercentChanged(string taxType, uint256 oldValue, uint256 newValue);
+
+    error Blacklisted(string message);
+    error MaxTransactionLimitExceeded(string message);
+    error ZeroAddress();
+    //error InsufficientBalance();
+    error InvalidNumberOfWalletAddresses();
+    error InvalidTaxPercentage();
+
+    constructor (
+        uint256 _totalTaxPercent,
+        uint256 _burnTaxPercent,
+        uint256 _walletTaxPercent,
+        address[] memory _walletAddresses
+    ) ERC20("Combined Token", "COMB") Ownable(msg.sender) { 
+        require(_totalTaxPercent <= 100, "Invalid total tax percentage");
+        require(_burnTaxPercent <= 100, "Invalid burn tax percentage");
+        require(_walletTaxPercent <= 100, "Invalid wallet tax percentage");
+        require(_walletAddresses.length == 5, "Invalid number of wallet addresses");
+        
+        totalTaxPercent = _totalTaxPercent;
+        burnTaxPercent = _burnTaxPercent;
+        walletTaxPercent = _walletTaxPercent;
+        walletAddresses = _walletAddresses;
+        
+        _mint(msg.sender, 10_000_000_000 * 10 ** 18);
+    }
+
+    function decimals() public view virtual override returns (uint8) {
+        return 14; 
+    }
+
+    function addToWhitelist(address _address, uint256 _maxTransactionAmount) external onlyOwner {
+        _whitelist[_address] = WhitelistInfo(true, _maxTransactionAmount);
+        emit AddedToWhitelist(_address, _maxTransactionAmount);
+    }
+
+    function removeFromWhitelist(address _address) external onlyOwner {
+        delete _whitelist[_address];
+        emit RemovedFromWhitelist(_address);
+    }
+
+    function isWhitelisted(address _address) external view returns (bool) {
+        return _whitelist[_address].isWhitelisted;
+    }
+
+    function getMaxTransactionAmount(address _address) external view returns (uint256) {
+        return _whitelist[_address].maxTransactionAmount;
+    }
+
+    function addToBlacklist(address _address) external onlyOwner {
+        _blacklist[_address] = true;
+        emit AddedToBlacklist(_address);
+    }
+
+    function removeFromBlacklist(address _address) external onlyOwner {
+        _blacklist[_address] = false;
+        emit RemovedFromBlacklist(_address);
+    }
+
+    function isBlacklisted(address _address) external view returns (bool) {
+        return _blacklist[_address];
+    }
+
+    function setTotalTaxPercent(uint256 newValue) public onlyOwner {
+        require(newValue <= 100, "Invalid tax percentage");
+        uint256 oldValue = totalTaxPercent;
+        totalTaxPercent = newValue;
+        emit TaxPercentChanged("TotalTaxPercent", oldValue, newValue);
+    }
+
+    function setBurnTaxPercent(uint256 newValue) public onlyOwner {
+        require(newValue <= 100, "Invalid tax percentage");
+        uint256 oldValue = burnTaxPercent;
+        burnTaxPercent = newValue;
+        emit TaxPercentChanged("BurnTaxPercent", oldValue, newValue);
+    }
+
+    function setWalletTaxPercent(uint256 newValue) public onlyOwner {
+        require(newValue <= 100, "Invalid tax percentage");
+        uint256 oldValue = walletTaxPercent;
+        walletTaxPercent = newValue;
+        emit TaxPercentChanged("WalletTaxPercent", oldValue, newValue);
+    }
+
+    function transfer(address recipient, uint256 amount) public virtual override returns (bool) {
+        _validateTransfer(msg.sender, recipient, amount);
+
+        uint256 taxAmount = (amount * totalTaxPercent) / 100;
+        uint256 burnAmount = (taxAmount * burnTaxPercent) / 100;
+        uint256 walletTaxAmount = (taxAmount * walletTaxPercent) / 100;
+        uint256 transferAmount = amount - taxAmount;
+
+        _transferWithTax(msg.sender, recipient, transferAmount, burnAmount, walletTaxAmount);
+        return true;
+    }
+
+    function transferFrom(address sender, address recipient, uint256 amount) public virtual override returns (bool) {
+        _validateTransfer(sender, recipient, amount);
+
+        uint256 taxAmount = (amount * totalTaxPercent) / 100;
+        uint256 burnAmount = (taxAmount * burnTaxPercent) / 100;
+        uint256 walletTaxAmount = (taxAmount * walletTaxPercent) / 100;
+        uint256 transferAmount = amount - taxAmount;
+        
+
+        _transferWithTax(sender, recipient, transferAmount, burnAmount, walletTaxAmount);
+        _approve(sender, _msgSender(), allowance(sender, _msgSender()) - amount);
+        return true;
+    }
+
+    function _transferWithTax(address sender, address recipient, uint256 transferAmount, uint256 burnAmount, uint256 walletTaxAmount) private {
+        super._transfer(sender, recipient, transferAmount);
+        _burn(sender, burnAmount);
+
+        for (uint256 i = 0; i < walletAddresses.length; i++) {
+            super._transfer(sender, walletAddresses[i], walletTaxAmount);
+        }
+
+        emit TransferWithTax(sender, recipient, transferAmount, transferAmount, burnAmount, walletTaxAmount);
+    }
+
+    function _validateTransfer(address sender, address recipient, uint256 amount) private view {
+        if (_blacklist[sender]) {
+            revert Blacklisted("Sender is blacklisted");
+        }
+        if (amount > 100 && !_whitelist[sender].isWhitelisted) {
+            revert MaxTransactionLimitExceeded("Amount exceeds sender's maximum transaction limit");
+        }
+        if (sender == address(0)) revert ZeroAddress();
+        if (recipient == address(0)) revert ZeroAddress();
+        //if (balanceOf(sender) < amount) revert InsufficientBalance();
+    }
+}
